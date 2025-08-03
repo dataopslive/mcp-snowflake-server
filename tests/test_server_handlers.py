@@ -298,7 +298,7 @@ class TestServerHandlers:
         assert resource_content["data"] == sample_database_info
 
         # Verify the query was called with uppercase database name
-        mock_db_client.execute_query.assert_called_once_with("SHOW DATABASES LIKE 'TEST_DATABASE'")
+        mock_db_client.execute_query.assert_called_once_with("SHOW DATABASES LIKE '%test_database%'")
 
     @pytest.mark.asyncio
     async def test_handle_get_database_info_missing_database(self, mock_db_client):

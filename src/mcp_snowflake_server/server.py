@@ -257,20 +257,24 @@ async def handle_read_query(arguments, db, server=None, allow_write=None,
         ),
     ]
 
+async def _handle_get_database_internal(db_name, db):
+    if not db_name:
+        query = "SHOW DATABASES"
+    else:
+        query = f"SHOW DATABASES LIKE '%{db_name}%'"
+    return await db.execute_query(query)
+
 
 async def handle_get_database_info(arguments, db, server=None, allow_write=None,
                                    write_detector=None, exclusion_config=None):
     if not arguments or "database" not in arguments:
         raise ValueError("Missing database argument")
-
-    database_name = arguments["database"]
-    query = f"SHOW DATABASES LIKE '{database_name.upper()}'"
-    data, data_id = await db.execute_query(query)
-
+    db_name = arguments["database"]
+    data, data_id = await _handle_get_database_internal(db_name, db)
     output = {
         "type": "data",
         "data_id": data_id,
-        "database": database_name,
+        "database": db_name,
         "data": data,
     }
     yaml_output = data_to_yaml(output)
@@ -282,6 +286,29 @@ async def handle_get_database_info(arguments, db, server=None, allow_write=None,
             resource=types.TextResourceContents(uri=f"data://{data_id}", text=json_output, mimeType="application/json"),
         ),
     ]
+
+
+async def handle_get_database_ddl(arguments, db, server=None, allow_write=None,
+                                  write_detector=None, exclusion_config=None):
+    output = await _handle_get_database_internal(arguments, db)
+    db_name = output["database"]
+    db_kind = output["data"].get("kind")
+    db_origin = output["data"].get('origin', '')
+
+    if db_kind in ['APPLICATION PACKAGE', 'APPLICATION']:
+        logger.info(f"Skipping {db_name} (kind: {db_kind})")
+        return
+
+    # Categorize as imported or normal
+    is_imported = db_kind == 'IMPORTED DATABASE' or bool(db_origin)
+
+    # Process imported databases
+    if is_imported:
+        logger.info(f"Database {db_name} categorized as 'imported'")
+        database_structure = process_database_structure_imported(db, db_name, output["data"])
+    else:
+        logger.info(f"Database {db_name} categorized as 'unimported'")
+        database_structure = process_database_structure_normal(db, db_name)
 
 async def handle_append_insight(arguments, db, server=None, allow_write=None,
                                 write_detector=None, exclusion_config=None):
@@ -523,6 +550,21 @@ async def main(
                 "required": ["database"],
             },
             handler=handle_get_database_info,
+        ),
+        Tool(
+            name="get_database_ddl",
+            description="Get DDL in YAML format for databases in the account",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "database": {
+                        "type": "string",
+                        "description": "Database name to get detailed information for"
+                    }
+                },
+                "required": ["database"],
+            },
+            handler=handle_get_database_ddl,
         )
     ]
 

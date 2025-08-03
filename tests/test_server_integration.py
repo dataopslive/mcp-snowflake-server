@@ -213,7 +213,7 @@ class TestServerIntegration:
                 tool_names = {tool.name for tool in tools}
 
             # Should include read-only tools
-            assert tool_names == {'list_databases', 'list_schemas', 'list_tables',
+            assert tool_names == {'list_databases', 'list_schemas', 'list_tables', 'get_database_ddl',
                                   'read_query', 'append_insight', 'get_database_info'}
 
 
