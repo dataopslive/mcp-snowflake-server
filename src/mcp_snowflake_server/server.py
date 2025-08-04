@@ -12,6 +12,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from pydantic import AnyUrl, BaseModel
 
+from .processor import Processor
 from .db_client import SnowflakeDB
 from .write_detector import SQLWriteDetector
 
@@ -290,25 +291,56 @@ async def handle_get_database_info(arguments, db, server=None, allow_write=None,
 
 async def handle_get_database_ddl(arguments, db, server=None, allow_write=None,
                                   write_detector=None, exclusion_config=None):
-    output = await _handle_get_database_internal(arguments, db)
-    db_name = output["database"]
-    db_kind = output["data"].get("kind")
-    db_origin = output["data"].get('origin', '')
+    databases, data_id = await _handle_get_database_internal(arguments, db)
 
-    if db_kind in ['APPLICATION PACKAGE', 'APPLICATION']:
-        logger.info(f"Skipping {db_name} (kind: {db_kind})")
-        return
+    # Initialize result
+    all_databases = {
+        "metadata": {
+            "database_count": len(databases)
+        },
+        "databases": {}
+    }
+    processed_count = 0
+    skipped_count = 0
+    error_count = 0
+    processor = Processor(db)
 
-    # Categorize as imported or normal
-    is_imported = db_kind == 'IMPORTED DATABASE' or bool(db_origin)
+    for database in databases:
+        db_name = database['name']
+        db_kind = database.get('kind')
 
-    # Process imported databases
-    if is_imported:
-        logger.info(f"Database {db_name} categorized as 'imported'")
-        database_structure = process_database_structure_imported(db, db_name, output["data"])
-    else:
-        logger.info(f"Database {db_name} categorized as 'unimported'")
-        database_structure = process_database_structure_normal(db, db_name)
+        # Skip certain database types
+        if db_kind in ['APPLICATION PACKAGE', 'APPLICATION']:
+            logger.info(f"Skipping {db_name} (kind: {db_kind})")
+            skipped_count += 1
+            continue
+
+        # Process database
+        try:
+            logger.info(f"Processing imported database {db_name}")
+            database_structure = await processor.process_database_structure(db_name, database)
+            all_databases["databases"][db_name] = database_structure
+            processed_count += 1
+            logger.info(f"Successfully processed imported database {db_name}")
+        except Exception as e:
+            logger.error(f"Error processing imported database {db_name}: {str(e)}")
+            error_count += 1
+
+    # Finalize output
+    all_databases["metadata"].update({
+        "processed_count": processed_count,
+        "skipped_count": skipped_count,
+        "error_count": error_count,
+    })
+    yaml_output = data_to_yaml(all_databases)
+    json_output = json.dumps(all_databases, default=data_json_serializer)
+    return [
+        types.TextContent(type="text", text=yaml_output),
+        types.EmbeddedResource(
+            type="resource",
+            resource=types.TextResourceContents(uri=f"data://{data_id}", text=json_output, mimeType="application/json"),
+        ),
+    ]
 
 async def handle_append_insight(arguments, db, server=None, allow_write=None,
                                 write_detector=None, exclusion_config=None):
