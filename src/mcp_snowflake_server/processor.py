@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, UTC
 
 logger = logging.getLogger('mcp_snowflake_dataops_server')
 logger.setLevel(logging.ERROR)
